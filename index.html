@@ -350,7 +350,7 @@ function churchView(){
   const own=isOwner(),l=chList(),loaded=own?S.chLoaded:S.mship!==null;
   let h=`<div class="wrap narrow"><div class="hd"><h1>اختر الكنيسة</h1></div>${ui.msg?`<div class="msg" role="status">${esc(ui.msg)}</div>`:""}${S.err?`<div class="warn">${esc(S.err)}</div>`:""}`;
   if(!loaded)h+='<div class="card empty">جارٍ التحميل...</div>';
-  else if(!l.length&&!(!own&&S.mship&&S.mship.length))h+=`<div class="card empty">${own?"لا توجد كنائس بعد. أضف أول كنيسة من الأسفل.":"أنت غير مسجَّل في أي كنيسة بعد. أرسل طلب انضمام بكود الكنيسة من الأسفل."}<code class="ltr">${esc(S.user.email)}</code></div>`;
+  else if(!l.length&&!(!own&&S.mship&&S.mship.length))h+=`<div class="card empty">${own?"لا توجد كنائس بعد. أضف أول كنيسة من الأسفل.":"أنت غير مسجَّل في أي كنيسة بعد. اكتب اسمك واختر كنيستك من القائمة بالأسفل لإرسال طلب انضمام."}<code class="ltr">${esc(S.user.email)}</code></div>`;
   else if(!own&&!l.length)h+='<div class="card empty">جارٍ التحميل...</div>';
   else h+=l.map(c=>`<div class="card"><button class="pri big" data-a="chgo" data-id="${c.id}">${esc(c.name)} <span class="ltr">(${esc(c.code)})</span></button>
     ${own?`<div class="bar"><button data-a="chedit" data-id="${c.id}">تعديل الاسم والكود</button><button data-a="chmig" data-id="${c.id}">نقل بيانات النظام القديم إليها</button></div>
@@ -358,13 +358,14 @@ function churchView(){
     ${ui.mig&&ui.mig.id===c.id?migBox():""}`:""}</div>`).join("");
   if(!own&&loaded){
     const pend=Object.values(S.jreq).filter(r=>!(S.mship||[]).includes(r.id));
-    h+=pend.map(r=>`<div class="card"><b>${esc(r.chName||"كنيسة")}</b><div class="mut">طلبك بانتظار موافقة مدير الكنيسة. ستظهر هنا فور الموافقة.</div><div class="bar"><button data-a="jrc" data-id="${r.id}">إلغاء الطلب</button></div></div>`).join("");
     const asked=new Set(pend.map(r=>r.id)),mine=new Set(S.mship||[]);
-    const avail=(S.dir||[]).filter(c=>!mine.has(c.ch)&&!asked.has(c.ch)).sort((a,b)=>a.name.localeCompare(b.name,"ar"));
+    const rowsAll=(S.dir||[]).filter(c=>!mine.has(c.ch)).map(c=>({ch:c.ch,name:c.name,code:c.code}));
+    pend.forEach(r=>{if(!rowsAll.some(x=>x.ch===r.id))rowsAll.push({ch:r.id,name:r.chName||"كنيسة",code:""})});
+    rowsAll.sort((a,b)=>a.name.localeCompare(b.name,"ar"));
     h+=`<div class="card"><h2>الانضمام إلى كنيسة</h2><div class="mut">اكتب اسمك وبريدك، ثم اختر كنيستك، وسيصل طلبك لمدير الكنيسة للموافقة عليه وتحديد صلاحياتك.</div>
     <label class="fl">الاسم الكامل<input id="jn" value="${esc(ui.jn!=null?ui.jn:((S.user.name&&S.user.name!==S.user.email)?S.user.name:""))}" placeholder="مثال: مينا سمير" aria-label="الاسم الكامل" autocomplete="name"></label>
     <label class="fl">البريد الإلكتروني (Gmail)<input id="je" class="ltr" type="email" value="${esc(ui.je!=null?ui.je:S.user.email)}" placeholder="name@gmail.com" aria-label="البريد الإلكتروني" autocomplete="email"></label>
-    ${avail.length?avail.map(c=>`<div class="row"><span style="flex:1;min-width:0"><b>${esc(c.name)}</b> <span class="ltr mut">(${esc(c.code)})</span></span><button class="pri" data-a="jrq" data-id="${c.ch}">طلب الانضمام</button></div>`).join(""):'<div class="mut">لا توجد كنائس متاحة للانضمام الآن.</div>'}</div>`;
+    ${rowsAll.length?rowsAll.map(c=>`<div class="row"><span style="flex:1;min-width:0"><b>${esc(c.name)}</b>${c.code?` <span class="ltr mut">(${esc(c.code)})</span>`:""}${asked.has(c.ch)?'<br><span class="mut">طلبك بانتظار موافقة مدير الكنيسة</span>':""}</span>${asked.has(c.ch)?`<button data-a="jrc" data-id="${c.ch}">إلغاء الطلب</button>`:`<button class="pri" data-a="jrq" data-id="${c.ch}">طلب الانضمام</button>`}</div>`).join(""):'<div class="mut">لا توجد كنائس متاحة للانضمام الآن. تواصل مع المسؤول.</div>'}</div>`;
   }
   if(own&&loaded)h+=`<div class="card"><h2>كنيسة جديدة (تكويد الكنائس)</h2><div class="mut">الكود حروف إنجليزية أو أرقام (حتى 12)، ولا يتكرر.</div>
     <div class="bar"><input id="chn" value="${esc(ui.chn||"")}" placeholder="اسم الكنيسة" aria-label="اسم الكنيسة"><input id="chc" class="ltr" value="${esc(ui.chc||"")}" placeholder="الكود مثل MRK" aria-label="كود الكنيسة" maxlength="12"><button class="pri" data-a="chadd">إضافة</button></div></div>`;
