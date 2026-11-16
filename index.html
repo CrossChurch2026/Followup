@@ -38,6 +38,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);
 .hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .hd h1{font:600 24px/1.2 var(--font-display);margin:0;color:var(--accent)}
 .hd select{flex:1;min-width:140px}
+.fl{display:block;margin:8px 0;font-size:14px}
+.fl input{display:block;width:100%;margin-top:4px}
 .chb{font-size:14px;padding:4px 10px;min-height:34px;border:1px solid var(--line);border-radius:999px}
 .tabs{display:flex;gap:6px;overflow-x:auto}
 .tabs button{flex:1 0 auto;white-space:nowrap}
@@ -359,7 +361,9 @@ function churchView(){
     h+=pend.map(r=>`<div class="card"><b>${esc(r.chName||"كنيسة")}</b><div class="mut">طلبك بانتظار موافقة مدير الكنيسة. ستظهر هنا فور الموافقة.</div><div class="bar"><button data-a="jrc" data-id="${r.id}">إلغاء الطلب</button></div></div>`).join("");
     const asked=new Set(pend.map(r=>r.id)),mine=new Set(S.mship||[]);
     const avail=(S.dir||[]).filter(c=>!mine.has(c.ch)&&!asked.has(c.ch)).sort((a,b)=>a.name.localeCompare(b.name,"ar"));
-    h+=`<div class="card"><h2>الانضمام إلى كنيسة</h2><div class="mut">اختر كنيستك، وسيصل طلبك (باسمك وبريدك) لمدير الكنيسة للموافقة عليه وتحديد صلاحياتك.</div>
+    h+=`<div class="card"><h2>الانضمام إلى كنيسة</h2><div class="mut">اكتب اسمك وبريدك، ثم اختر كنيستك، وسيصل طلبك لمدير الكنيسة للموافقة عليه وتحديد صلاحياتك.</div>
+    <label class="fl">الاسم الكامل<input id="jn" value="${esc(ui.jn!=null?ui.jn:((S.user.name&&S.user.name!==S.user.email)?S.user.name:""))}" placeholder="مثال: مينا سمير" aria-label="الاسم الكامل" autocomplete="name"></label>
+    <label class="fl">البريد الإلكتروني (Gmail)<input id="je" class="ltr" type="email" value="${esc(ui.je!=null?ui.je:S.user.email)}" placeholder="name@gmail.com" aria-label="البريد الإلكتروني" autocomplete="email"></label>
     ${avail.length?avail.map(c=>`<div class="row"><span style="flex:1;min-width:0"><b>${esc(c.name)}</b> <span class="ltr mut">(${esc(c.code)})</span></span><button class="pri" data-a="jrq" data-id="${c.ch}">طلب الانضمام</button></div>`).join(""):'<div class="mut">لا توجد كنائس متاحة للانضمام الآن.</div>'}</div>`;
   }
   if(own&&loaded)h+=`<div class="card"><h2>كنيسة جديدة (تكويد الكنائس)</h2><div class="mut">الكود حروف إنجليزية أو أرقام (حتى 12)، ولا يتكرر.</div>
@@ -861,9 +865,13 @@ $app.addEventListener("click",async e=>{
     const c=(S.dir||[]).find(x=>x.ch===id);
     if(!c){flash("الكنيسة غير موجودة");return}
     if((S.mship||[]).includes(c.ch)){flash("أنت مسجَّل في هذه الكنيسة بالفعل");return}
+    const nm=((($app.querySelector("#jn")||{}).value)||"").trim().replace(/\s+/g," "),em=((($app.querySelector("#je")||{}).value)||"").trim().toLowerCase();
+    ui.jn=nm;ui.je=em;
+    if(nm.length<3||nm.includes("@")){flash("اكتب اسمك الكامل (وليس البريد)");return}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){flash("اكتب بريدك الإلكتروني بشكل صحيح");return}
+    if(em!==String(S.user.email).toLowerCase()){flash("البريد يجب أن يطابق حساب Gmail الذي سجّلت الدخول به: "+S.user.email);return}
     try{
-      const em=S.user.email;
-      await FB.set("churches/"+c.ch+"/requests/"+em,{email:em,name:S.user.name||"",at:Date.now()});
+      await FB.set("churches/"+c.ch+"/requests/"+em,{email:em,name:nm,at:Date.now()});
       await FB.set("joinRequests/"+em+"/churches/"+c.ch,{ch:c.ch,chName:c.name||""});
       flash("تم إرسال الطلب إلى مدير الكنيسة");
     }catch(x){flash("تعذر إرسال الطلب: "+((x&&(x.code||x.message))||"خطأ"))}
@@ -977,7 +985,7 @@ $app.addEventListener("change",e=>{
 $app.addEventListener("input",e=>{
   const t=e.target;
   if(t.id==="imptxt")ui.impText=t.value;
-  else if(t.id==="chn"||t.id==="chc"||t.id==="jcode")ui[t.id]=t.value
+  else if(t.id==="chn"||t.id==="chc"||t.id==="jcode"||t.id==="jn"||t.id==="je")ui[t.id]=t.value
   else if(t.id==="why"){if(ui.pick)ui.pick.txt=t.value}
   else if(t.id==="nt"){if(ui.note)ui.note.txt=t.value}
   else if(t.id==="sq"||t.id==="uq"){
