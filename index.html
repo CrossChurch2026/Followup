@@ -150,7 +150,7 @@ const configured=!placeholder(CFG.apiKey)&&!placeholder(CFG.projectId)&&!placeho
 
 /* ============================ state ============================ */
 /* الهرم: خدمة (svc) ← فصل (cls) ← خادم (srv). سجلات المتابعة (weeks) تخص الفصل. */
-const S={user:null,authReady:false,me:undefined,svc:{},cls:{},srv:{},weeks:{},users:{},err:"",pend:{},online:navigator.onLine,churches:{},dir:[],mship:null,chLoaded:false,autoDone:false,reqs:{},jreq:{},codesSynced:false};
+const S={user:null,authReady:false,me:undefined,svc:{},cls:{},srv:{},weeks:{},users:{},err:"",pend:{},online:navigator.onLine,churches:{},people:{},dir:[],mship:null,chLoaded:false,autoDone:false,reqs:{},jreq:{},codesSynced:false};
 const ui={tab:"",sid:null,cid:null,date:fridayOnOrBefore(today),per:"month",month:today.slice(0,7),year:today.slice(0,4),scope:"one",del:null,msg:"",busy:false,imp:null,impText:"",uedit:null,usub:"list",ef:null,efFor:null,q:"",sq:"",pick:null,bulk:null,note:null,srvSub:"struct",openS:{},ch:null,chEdit:null,mig:null};
 try{ui.sid=localStorage.getItem("servants_fb_sid");ui.cid=localStorage.getItem("servants_fb_cid")}catch(e){}
 const store=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
@@ -171,6 +171,10 @@ const svcList=()=>{const ids=isAdmin()?Object.keys(S.svc):mSvcs().filter(id=>S.s
 const cur=()=>{const l=svcList();return l.find(x=>x.id===ui.sid)||l[0]||null};
 const classesOf=sid=>Object.values(S.cls).filter(c=>c.sid===sid&&clsAllowed(c)).sort((a,b)=>(a.order||0)-(b.order||0));
 const curCls=()=>{const v=cur();if(!v)return null;const l=classesOf(v.id);return l.find(c=>c.id===ui.cid)||l[0]||null};
+/* سجل الأسماء الموحّد: مفتاح الاسم بعد التطبيع (الألف/الياء/التاء المربوطة والتشكيل والمسافات) */
+const nameKey=n=>String(n||"").normalize("NFKD").replace(/[\u064B-\u065F\u0670\u0640]/g,"").replace(/[أإآٱ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[\/\\.]/g," ").replace(/\s+/g," ").trim().toLowerCase();
+const spOf=x=>{const c=S.cls[x.cid],v=c&&S.svc[c.sid];return(v?v.name:"؟")+" - "+(c?c.name:"؟")};
+const placesOf=k=>Object.values(S.srv).filter(x=>(x.pid||nameKey(x.name))===k).map(spOf);
 const servants=cid=>Object.values(S.srv).filter(x=>x.cid===cid).sort((a,b)=>(a.order||0)-(b.order||0));
 const tabsAllowed=()=>{const t=[];if(can("rec"))t.push(["rec","المتابعة"]);if(can("rep"))t.push(["rep","التقارير"]);if(can("srv"))t.push(["srv","الخدمات والخدام"]);if(isAdmin())t.push(["usr","المستخدمون"+(Object.keys(S.reqs).length?" ("+Object.keys(S.reqs).length+")":"")]);t.push(["acc","حسابي"]);return t};
 const cellKey=(vid,i)=>vid+"_"+i;
@@ -265,13 +269,14 @@ function reconcile(){
       }
     }
   }
+  if(can("srv"))add("people",()=>FB.watchCol(P("people"),(list,m)=>{setPend("people",m);S.people={};list.forEach(d=>S.people[d.id]={id:d.id,name:d.name||""});paint()},dbErr));
   for(const c of Object.values(S.cls)){
     if(!(admin||mSvcs().includes(c.sid)))continue;
     const sid=c.sid,cid=c.id;
     add("srv:"+cid,()=>FB.watchCol(cpath(sid,cid)+"/servants",(list,m)=>{
       setPend("srv:"+cid,m);
       for(const k in S.srv)if(S.srv[k].cid===cid)delete S.srv[k];
-      list.forEach(d=>S.srv[d.id]={id:d.id,sid,cid,name:d.name||"",order:d.order||0});paint();
+      list.forEach(d=>S.srv[d.id]={id:d.id,sid,cid,name:d.name||"",order:d.order||0,pid:d.pid||""});paint();
     },dbErr));
     if(can("rec")||can("rep"))add("wk:"+cid,()=>FB.watchCol(cpath(sid,cid)+"/weeks",(list,m)=>{
       setPend("wk:"+cid,m);
@@ -288,7 +293,7 @@ function reconcile(){
     if(p[0]==="svc")dropService(p[1]);
   }
 }
-const resetChurchData=()=>{S.reqs={};S.me=undefined;S.svc={};S.cls={};S.srv={};S.weeks={};S.users={};S.pend={};S.err=""};
+const resetChurchData=()=>{S.people={};S.reqs={};S.me=undefined;S.svc={};S.cls={};S.srv={};S.weeks={};S.users={};S.pend={};S.err=""};
 function unsubChurch(){for(const k of Object.keys(subs)){if(k.startsWith("g:"))continue;try{subs[k]()}catch(e){}delete subs[k]}}
 function autoEnter(){
   if(ui.ch||S.autoDone)return;
@@ -474,10 +479,16 @@ function srvView(v,cl){
   }
   if(!cl)return seg+`<div class="card empty">${!v?(admin?"أضف خدمة أولاً.":"لا توجد خدمة مسموح لك بها."):(admin?"أضف فصلاً لهذه الخدمة أولاً من «الخدمات والفصول».":"لا يوجد فصل مسموح لك به.")}</div>`;
   const sv=servants(cl.id),q=(ui.sq||"").trim().toLowerCase();
-  return seg+`<div class="card"><h2>خدام «${esc(v.name)} - ${esc(cl.name)}» <span class="badge">${sv.length}</span></h2>
+  const da=ui.dupAsk&&ui.dupAsk.cid===cl.id?ui.dupAsk:null,unl=admin?Object.values(S.srv).filter(x=>!x.pid&&nameKey(x.name)).length:0;
+  const multi=x=>{const n=placesOf(x.pid||nameKey(x.name)).length;return n>1?`<span class="badge" title="${esc(placesOf(x.pid||nameKey(x.name)).join("، "))}">في ${n} فصول</span>`:""};
+  return seg+(da&&da.link.length?`<div class="card"><h2>أسماء مسجلة من قبل</h2><div class="mut">هذه الأسماء موجودة في فصول أخرى. إن كانوا نفس الأشخاص تُضاف أسماؤهم لهذا الفصل أيضاً ويُقيَّمون فيه بشكل مستقل، وإلا غيّر الاسم (مثلاً بإضافة اسم الأب).</div>
+  ${da.link.map(x=>`<div class="row"><b>${esc(x.n)}</b><span class="mut">${esc(x.where.join("، ")||"سجل الأسماء")}</span></div>`).join("")}
+  ${da.fresh.length?`<div class="mut">أسماء جديدة ستُضاف: ${esc(da.fresh.map(x=>x.n).join("، "))}</div>`:""}
+  <div class="bar"><button class="pri" data-a="dupy">نعم، نفس الأشخاص: أضفهم</button><button data-a="dupn">أضف الجدد فقط</button><button data-a="dupx">إلغاء</button></div></div>`:"")+(unl?`<div class="card"><div class="warn">يوجد ${unl} خادم غير مربوطين بسجل الأسماء (أُضيفوا قبل هذا التحديث). اربطهم ليعمل منع التكرار عليهم.</div><div><button class="pri" data-a="plink">ربط الخدام الحاليين</button></div></div>`:"")+`<div class="card"><h2>خدام «${esc(v.name)} - ${esc(cl.name)}» <span class="badge">${sv.length}</span></h2>
   <div class="mut">إضافة أسماء (اسم في كل سطر):</div><textarea id="nv" placeholder="مينا جرجس&#10;مريم سمير" aria-label="أسماء الخدام"></textarea><div><button class="pri" data-a="av">إضافة الأسماء</button></div></div>
   <div class="card">${sv.length?`<input type="search" id="sq" value="${esc(ui.sq)}" placeholder="بحث عن خادم" aria-label="بحث عن خادم">`:""}
-  ${sv.map(x=>`<div class="row" data-nm="${esc(x.name)}"${q&&!x.name.toLowerCase().includes(q)?" hidden":""}><input data-a="vn" data-id="${x.id}" value="${esc(x.name)}" aria-label="اسم الخادم">${delBtn("v",x.id)}</div>`).join("")||'<div class="empty">لا يوجد خدام بعد.</div>'}</div>`;
+  ${sv.map(x=>`<div class="row" data-nm="${esc(x.name)}"${q&&!x.name.toLowerCase().includes(q)?" hidden":""}><input data-a="vn" data-id="${x.id}" value="${esc(x.name)}" aria-label="اسم الخادم">${multi(x)}${delBtn("v",x.id)}</div>`).join("")||'<div class="empty">لا يوجد خدام بعد.</div>'}</div>
+  <div class="card"><h2>تقرير الخدام المسجلين</h2><div class="mut">ملف إكسيل بكل الخدام (بدون تكرار) وفصول كل خادم وتنبيهات التكرار، لمراجعة عدم تكرار الأسماء.</div><div><button class="pri" data-a="roster">تحميل تقرير الخدام</button></div></div>`;
 }
 function userForm(u,key,isNew){
   const sc=u.screens||{},full=new Set(u.full||[]),cs=new Set(u.classes||[]);
@@ -679,6 +690,10 @@ async function buildReport(v,cl){
       if(all.length){const r=totalRow(all);r[0]="إجمالي الخدمة";r[10]=r[10]==null?"":r[10];rows.push(["",...r]);bold.push(rows.length)}
       addSheet(wb,used,"خدمة - "+x.name,rows,[20,...SUMW],{pct:[12],rate:13,boldRows:bold});
     });
+    {const place={};pairs.forEach(pr=>place[pr.c.id]=pr.v.name+" - "+pr.c.name);
+     const g={};allSt.forEach(o=>{const k=o.sv.pid||nameKey(o.sv.name);const e=g[k]=g[k]||{n:o.sv.name,cls:[],rec:0,score:0,ex:0};e.cls.push(place[o.sv.cid]||"");e.rec+=o.rec;e.score+=o.score;e.ex+=o.ex});
+     const ppl=Object.values(g).sort((a,b)=>a.n.localeCompare(b.n,"ar"));
+     addSheet(wb,used,"الخدام (مجمّع)",[["الخادم","عدد الفصول","الخدمات والفصول","البنود المسجّلة","أيام العذر","النسبة","التقدير"],...ppl.map(e=>{const pp=e.rec>0?e.score/e.rec:null;return[e.n,e.cls.length,e.cls.join("، "),e.rec,e.ex,pp==null?"":pp,rate(pp)]})],[26,12,44,14,12,12,16],{pct:[6],rate:7})}
     addSheet(wb,used,"التفاصيل",detailAoa(pairs,t,true,true),detW(true,true),{paintFrom:detPaint(true,true),paintTo:detPaint(true,true)+NI});
     const cc=curChurch();
     name="servants-followup-church"+(cc&&cc.code?"-"+cc.code.toLowerCase():"")+"-"+per+".xlsx";
@@ -811,6 +826,55 @@ function readUserForm(idx){
   const eml=q("email");
   return{editor:!!(q("editor")&&q("editor").checked),email:eml?eml.value.trim().toLowerCase():"",name:q("name").value.trim(),role:q("admin").checked?"admin":"user",active:q("active").checked,screens,full,classes,services};
 }
+async function doAddServants(withLink){
+  const d=ui.dupAsk;ui.dupAsk=null;if(!d)return;
+  const c=S.cls[d.cid];if(!c)return;
+  const items=[...d.fresh.map(x=>({...x,fresh:true})),...(withLink?d.link:[])];let n=0,bad=[],i=0;
+  for(const it of items){
+    try{
+      if(it.fresh)await FB.set(P("people/"+it.k),{name:it.n,key:it.k,at:Date.now()});     /* إنشاء فقط: القاعدة ترفض اسماً موجوداً */
+      await FB.set(spath(d.sid,d.cid,uid()),{name:it.n,order:Date.now()+(i++),cid:d.cid,pid:it.k});n++;
+    }catch(er){bad.push(it.n+((er&&er.code==="permission-denied")?" (الاسم مسجل بالفعل لخادم آخر)":""))}
+  }
+  const notes=[...d.skipped,...(withLink?[]:d.link.map(x=>x.n+" (تُرك لأنه مسجل في فصل آخر)")),...bad];
+  flash((n?"تمت إضافة "+n+" خادم. ":"لم تتم إضافة أحد. ")+(notes.length?"لم يُضف: "+notes.join("، "):""));
+}
+async function buildRoster(){
+  if(!window.ExcelJS)throw new Error("مكتبة الإكسيل غير محمّلة");
+  const wb=new ExcelJS.Workbook(),used=new Set();wb.creator="متابعة الخدام";
+  const all=Object.values(S.srv).filter(x=>S.cls[x.cid]).sort((a,b)=>spOf(a).localeCompare(spOf(b),"ar")||(a.order||0)-(b.order||0));
+  const g={};all.forEach(x=>{const k=x.pid||nameKey(x.name);(g[k]=g[k]||[]).push(x)});
+  const people=Object.keys(g).map(k=>({k,n:g[k][0].name,list:g[k]})).sort((a,b)=>a.n.localeCompare(b.n,"ar"));
+  addSheet(wb,used,"الخدام (بدون تكرار)",[["الخادم","عدد الفصول","الخدمات والفصول","ملاحظة"],...people.map(q=>[q.n,q.list.length,q.list.map(spOf).join("، "),q.list.length>1?"مسجل في أكثر من فصل":""])],[26,12,50,24]);
+  addSheet(wb,used,"سجل الفصول",[["الخدمة","الفصل","الخادم","مربوط بسجل الأسماء"],...all.map(x=>{const c=S.cls[x.cid],v=S.svc[c.sid];return[v?v.name:"",c.name,x.name,x.pid?"نعم":"لا"]})],[22,22,26,18]);
+  const warn=[];
+  Object.values(all.reduce((m,x)=>{const k=x.cid+"|"+nameKey(x.name);(m[k]=m[k]||[]).push(x);return m},{})).filter(l=>l.length>1).forEach(l=>warn.push(["تكرار داخل نفس الفصل",spOf(l[0]),l.map(x=>x.name).join(" / "),"احذف النسخة الزائدة"]));
+  people.filter(q=>q.list.length>1&&q.list.some(x=>!x.pid)).forEach(q=>warn.push(["غير مربوط بسجل الأسماء",q.list.map(spOf).join("، "),q.n,"اضغط «ربط الخدام الحاليين»"]));
+  addSheet(wb,used,"تنبيهات التكرار",[["النوع","المكان","الاسم","الإجراء"],...(warn.length?warn:[["لا توجد تكرارات","","",""]])],[26,40,30,30]);
+  const cc=curChurch();
+  return{blob:new Blob([await wb.xlsx.writeBuffer()],{type:XLSX_MIME}),name:"servants-roster"+(cc&&cc.code?"-"+cc.code.toLowerCase():"")+".xlsx"};
+}
+/* مدير الكنيسة فقط (يرى كل الخدام) يحذف اسماً من السجل إذا لم يبقَ له خادم في أي فصل */
+function dropOrphanPeople(pids,gone){
+  if(!isAdmin())return;
+  [...new Set(pids.filter(Boolean))].forEach(k=>{if(S.people[k]&&!Object.values(S.srv).some(x=>!gone.has(x.id)&&x.pid===k))FB.del(P("people/"+k)).catch(()=>{})});
+}
+function renameServant(id,val){
+  const x=S.srv[id];if(!x)return;
+  val=val.trim().replace(/\s+/g," ");if(!val||val===x.name){render();return}
+  const k=nameKey(val),old=x.pid||nameKey(x.name);
+  if(k!==old){
+    if(servants(x.cid).some(y=>y.id!==id&&nameKey(y.name)===k)){flash("الاسم مسجل بالفعل في هذا الفصل");render();return}
+    if(S.people[k]||Object.values(S.srv).some(y=>nameKey(y.name)===k)){flash("الاسم مسجل لخادم آخر. لإضافته لهذا الفصل استعمل «إضافة الأسماء»");render();return}
+    const mates=Object.values(S.srv).filter(y=>(y.pid||nameKey(y.name))===old);
+    if(mates.length>1&&!isAdmin()){flash("هذا الخادم مسجل في أكثر من فصل، تعديل اسمه من مدير الكنيسة");render();return}
+    (async()=>{try{
+      await FB.set(P("people/"+k),{name:val,key:k,at:Date.now()});
+      for(const y of mates)await FB.set(spath(y.sid,y.cid,y.id),{name:val,pid:k},true);
+      if(isAdmin()&&S.people[old])await FB.del(P("people/"+old));
+    }catch(er){failMsg(er)}})();
+  }else FB.set(spath(x.sid,x.cid,id),{name:val},true).catch(failMsg);
+}
 /* المستخدم يُسجَّل في الكنيسة الحالية (members) مع فهرس يعرّفه بكنائسه (memberships) */
 function saveMember(email,data){
   FB.set(P("members/"+email),data)
@@ -929,7 +993,24 @@ $app.addEventListener("click",async e=>{
   else if(a==="csel"){ui.cid=id;store("servants_fb_cid",id)}
   else if(a==="as"){const n=$app.querySelector("#ns").value.trim();if(!n)return;const sid=uid();ui.sid=sid;store("servants_fb_sid",sid);FB.set(P("services/"+sid),{name:n,order:Date.now()}).catch(failMsg);S.svc[sid]={id:sid,name:n,order:Date.now()}}
   else if(a==="ac"){const n=$app.querySelector("#nc").value.trim();if(!n||!v)return;const cid=uid();ui.cid=cid;store("servants_fb_cid",cid);FB.set(cpath(v.id,cid),{name:n,order:Date.now()}).catch(failMsg);S.cls[cid]={id:cid,sid:v.id,name:n,order:Date.now()}}
-  else if(a==="av"){if(!cl)return;const l=$app.querySelector("#nv").value.split("\n").map(x=>x.trim()).filter(Boolean);if(!l.length)return;l.forEach((n,i)=>FB.set(spath(cl.sid,cl.id,uid()),{name:n,order:Date.now()+i,cid:cl.id}).catch(failMsg));$app.querySelector("#nv").value=""}
+  else if(a==="av"){if(!cl)return;
+    const raw=$app.querySelector("#nv").value.split("\n").map(x=>x.trim().replace(/\s+/g," ")).filter(Boolean);if(!raw.length)return;
+    const here=new Set(servants(cl.id).map(x=>nameKey(x.name))),seen=new Set(),fresh=[],link=[],skipped=[];
+    raw.forEach(n=>{const k=nameKey(n);if(!k)return;
+      if(seen.has(k)){skipped.push(n+" (مكرر في القائمة)");return}seen.add(k);
+      if(here.has(k)){skipped.push(n+" (مسجل بالفعل في هذا الفصل)");return}
+      if(S.people[k]||Object.values(S.srv).some(x=>nameKey(x.name)===k))link.push({n,k,where:placesOf(k)});else fresh.push({n,k})});
+    $app.querySelector("#nv").value="";
+    ui.dupAsk={sid:cl.sid,cid:cl.id,fresh,link,skipped};
+    if(!link.length){await doAddServants(false)}}
+  else if(a==="dupy"){await doAddServants(true)}
+  else if(a==="dupn"){await doAddServants(false)}
+  else if(a==="dupx"){ui.dupAsk=null}
+  else if(a==="plink"){if(!isAdmin())return;
+    const list=Object.values(S.srv).filter(x=>!x.pid&&nameKey(x.name));let n=0;
+    for(const x of list){const k=nameKey(x.name);try{if(!S.people[k])await FB.set(P("people/"+k),{name:x.name,key:k,at:Date.now()},true);await FB.set(spath(x.sid,x.cid,x.id),{pid:k},true);n++}catch(er){failMsg(er)}}
+    flash("تم ربط "+n+" خادم بسجل الأسماء")}
+  else if(a==="roster"){try{const r=await buildRoster();await saveFile(r.blob,r.name)}catch(x){flash("تعذر إنشاء الملف: "+((x&&x.message)||"خطأ"))}return}
   else if(a==="sd"||a==="cd"||a==="vd"||a==="ud"){ui.del=a[0]+id}
   else if(a==="dc"){ui.del=null}
   else if(a==="sx"){ui.del=null;
@@ -939,11 +1020,13 @@ $app.addEventListener("click",async e=>{
       Object.values(S.weeks).filter(w=>w.cid===c.id).forEach(w=>paths.push(wpath(id,c.id,w.date)));
       paths.push(cpath(id,c.id))});
     paths.push(P("services/"+id));
-    FB.delMany(paths).catch(failMsg)}
+    const gone=new Set(),pids=[];Object.values(S.srv).filter(x=>x.sid===id).forEach(x=>{gone.add(x.id);pids.push(x.pid)});
+    FB.delMany(paths).then(()=>dropOrphanPeople(pids,gone)).catch(failMsg)}
   else if(a==="cx"){ui.del=null;const c=S.cls[id];if(c){
     const paths=[...servants(id).map(s=>spath(c.sid,id,s.id)),...Object.values(S.weeks).filter(w=>w.cid===id).map(w=>wpath(c.sid,id,w.date)),cpath(c.sid,id)];
-    FB.delMany(paths).catch(failMsg)}}
-  else if(a==="vx"){ui.del=null;if(cl)FB.del(spath(cl.sid,cl.id,id)).catch(failMsg)}
+    const gone=new Set(servants(id).map(x=>x.id)),pids=servants(id).map(x=>x.pid);
+    FB.delMany(paths).then(()=>dropOrphanPeople(pids,gone)).catch(failMsg)}}
+  else if(a==="vx"){ui.del=null;if(cl){const x=S.srv[id];FB.del(spath(cl.sid,cl.id,id)).then(()=>dropOrphanPeople(x?[x.pid]:[],new Set([id]))).catch(failMsg)}}
   else if(a==="ux"){ui.del=null;if(id&&id!==ADMIN){FB.del(P("members/"+id)).then(()=>FB.del("memberships/"+id+"/churches/"+ui.ch)).catch(failMsg)}ui.uedit=null;ui.ef=null;flash("تم حذف المستخدم");return}
   else if(a==="unew"){ui.uedit="new";ui.ef=null}
   else if(a==="uedit"){ui.uedit=b.dataset.email;ui.ef=null}
@@ -979,7 +1062,7 @@ $app.addEventListener("change",e=>{
   else if(t.id==="mo"){if(t.value)ui.month=t.value}else if(t.id==="yr"){if(t.value)ui.year=String(t.value)}
   else if(a==="sn"){const val=t.value.trim();if(val)FB.set(P("services/"+t.dataset.id),{name:val},true).catch(failMsg)}
   else if(a==="cn"){const val=t.value.trim(),c=S.cls[t.dataset.id];if(val&&c)FB.set(cpath(c.sid,c.id),{name:val},true).catch(failMsg)}
-  else if(a==="vn"){const val=t.value.trim(),c=curCls();if(val&&c)FB.set(spath(c.sid,c.id,t.dataset.id),{name:val},true).catch(failMsg)}
+  else if(a==="vn"){renameServant(t.dataset.id,t.value)}
   else return;
   render();
 });
