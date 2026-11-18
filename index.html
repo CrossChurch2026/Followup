@@ -38,6 +38,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);
 .hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .hd h1{font:600 24px/1.2 var(--font-display);margin:0;color:var(--accent)}
 .hd select{flex:1;min-width:140px}
+.sugg{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.sugg button{text-align:right;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:44px}
+.sugg button[disabled]{opacity:.55}
 .fl{display:block;margin:8px 0;font-size:14px}
 .fl input{display:block;width:100%;margin-top:4px}
 .chb{font-size:14px;padding:4px 10px;min-height:34px;border:1px solid var(--line);border-radius:999px}
@@ -175,6 +178,17 @@ const curCls=()=>{const v=cur();if(!v)return null;const l=classesOf(v.id);return
 const nameKey=n=>String(n||"").normalize("NFKD").replace(/[\u064B-\u065F\u0670\u0640]/g,"").replace(/[أإآٱ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/[\/\\.]/g," ").replace(/\s+/g," ").trim().toLowerCase();
 const spOf=x=>{const c=S.cls[x.cid],v=c&&S.svc[c.sid];return(v?v.name:"؟")+" - "+(c?c.name:"؟")};
 const placesOf=k=>Object.values(S.srv).filter(x=>(x.pid||nameKey(x.name))===k).map(spOf);
+/* كل الأشخاص المسجلين في الكنيسة (من السجل ومن الخدام الظاهرين) */
+const persons=()=>{const m={};Object.values(S.people).forEach(x=>{m[x.id]={k:x.id,name:x.name}});Object.values(S.srv).forEach(x=>{const k=x.pid||nameKey(x.name);if(!m[k])m[k]={k,name:x.name}});return m};
+const toks=n=>nameKey(n).split(" ").filter(Boolean);
+/* بحث أثناء الكتابة: كل كلمة مكتوبة تبدأ بها كلمة من الاسم */
+const searchPeople=(q,cid)=>{const t=toks(q);if(!t.length)return[];
+  const here=new Set(servants(cid).map(x=>x.pid||nameKey(x.name)));
+  return Object.values(persons()).filter(p=>{const b=toks(p.name);return t.every(w=>b.some(u=>u.startsWith(w)))}).sort((a,b)=>a.name.localeCompare(b.name,"ar")).slice(0,6).map(p=>({...p,here:here.has(p.k),where:placesOf(p.k)}))};
+/* أسماء شبه متطابقة: كلمات أحد الاسمين (كلمتان فأكثر) موجودة كلها ضمن الآخر، مثل «بولا النسر» و«بولا النسر جميل» */
+const similarTo=(n,k)=>{const a=toks(n);if(!a.length)return[];
+  return Object.values(persons()).filter(p=>{if(p.k===k)return false;const b=toks(p.name),sm=a.length<=b.length?a:b,bg=sm===a?b:a;
+    return sm.length>=2&&sm.every(t=>bg.some(u=>u===t||(t.length>=3&&u.startsWith(t))||(u.length>=3&&t.startsWith(u))))}).map(p=>({...p,where:placesOf(p.k)}))};
 const servants=cid=>Object.values(S.srv).filter(x=>x.cid===cid).sort((a,b)=>(a.order||0)-(b.order||0));
 const tabsAllowed=()=>{const t=[];if(can("rec"))t.push(["rec","المتابعة"]);if(can("rep"))t.push(["rep","التقارير"]);if(can("srv"))t.push(["srv","الخدمات والخدام"]);if(isAdmin())t.push(["usr","المستخدمون"+(Object.keys(S.reqs).length?" ("+Object.keys(S.reqs).length+")":"")]);t.push(["acc","حسابي"]);return t};
 const cellKey=(vid,i)=>vid+"_"+i;
@@ -481,11 +495,14 @@ function srvView(v,cl){
   const sv=servants(cl.id),q=(ui.sq||"").trim().toLowerCase();
   const da=ui.dupAsk&&ui.dupAsk.cid===cl.id?ui.dupAsk:null,unl=admin?Object.values(S.srv).filter(x=>!x.pid&&nameKey(x.name)).length:0;
   const multi=x=>{const n=placesOf(x.pid||nameKey(x.name)).length;return n>1?`<span class="badge" title="${esc(placesOf(x.pid||nameKey(x.name)).join("، "))}">في ${n} فصول</span>`:""};
-  return seg+(da&&da.link.length?`<div class="card"><h2>أسماء مسجلة من قبل</h2><div class="mut">هذه الأسماء موجودة في فصول أخرى. إن كانوا نفس الأشخاص تُضاف أسماؤهم لهذا الفصل أيضاً ويُقيَّمون فيه بشكل مستقل، وإلا غيّر الاسم (مثلاً بإضافة اسم الأب).</div>
+  const sm=da&&da.sim&&da.sim.length?da.sim[0]:null;
+  return seg+(sm?`<div class="card"><h2>هل هو نفس الشخص؟</h2><div class="mut">الاسم الذي كتبته «<b>${esc(sm.n)}</b>» يشبه أسماء مسجلة. اختر الشخص إن كان هو، أو «شخص مختلف» لتسجيله كاسم جديد.</div>
+  ${sm.cands.map(c=>`<div class="row"><span style="flex:1;min-width:0"><b>${esc(c.name)}</b><br><span class="mut">${esc(c.where.join("، ")||"سجل الأسماء")}</span></span><button class="pri" data-a="simy" data-k="${esc(c.k)}">هو نفسه</button></div>`).join("")}
+  <div class="bar"><button data-a="simn">شخص مختلف (اسم جديد)</button><button data-a="dupx">إلغاء</button></div>${da.sim.length>1?`<div class="mut">متبقٍ ${da.sim.length-1} اسم للمراجعة بعد هذا.</div>`:""}</div>`:"")+(!sm&&da&&da.link.length?`<div class="card"><h2>أسماء مسجلة من قبل</h2><div class="mut">هذه الأسماء موجودة في فصول أخرى. إن كانوا نفس الأشخاص تُضاف أسماؤهم لهذا الفصل أيضاً ويُقيَّمون فيه بشكل مستقل، وإلا غيّر الاسم (مثلاً بإضافة اسم الأب).</div>
   ${da.link.map(x=>`<div class="row"><b>${esc(x.n)}</b><span class="mut">${esc(x.where.join("، ")||"سجل الأسماء")}</span></div>`).join("")}
   ${da.fresh.length?`<div class="mut">أسماء جديدة ستُضاف: ${esc(da.fresh.map(x=>x.n).join("، "))}</div>`:""}
   <div class="bar"><button class="pri" data-a="dupy">نعم، نفس الأشخاص: أضفهم</button><button data-a="dupn">أضف الجدد فقط</button><button data-a="dupx">إلغاء</button></div></div>`:"")+(unl?`<div class="card"><div class="warn">يوجد ${unl} خادم غير مربوطين بسجل الأسماء (أُضيفوا قبل هذا التحديث). اربطهم ليعمل منع التكرار عليهم.</div><div><button class="pri" data-a="plink">ربط الخدام الحاليين</button></div></div>`:"")+`<div class="card"><h2>خدام «${esc(v.name)} - ${esc(cl.name)}» <span class="badge">${sv.length}</span></h2>
-  <div class="mut">إضافة أسماء (اسم في كل سطر):</div><textarea id="nv" placeholder="مينا جرجس&#10;مريم سمير" aria-label="أسماء الخدام"></textarea><div><button class="pri" data-a="av">إضافة الأسماء</button></div></div>
+  <div class="mut">أضف اسماً (أو عدة أسماء، اسم في كل سطر). أثناء الكتابة تظهر الأسماء المسجلة في الكنيسة: اضغط الاسم لإضافته مباشرة، وإن لم يوجد يُسجَّل كاسم جديد.</div><textarea id="nv" placeholder="ابدأ بكتابة الاسم..." aria-label="أسماء الخدام" autocomplete="off"></textarea><div id="sugg" class="sugg" aria-live="polite"></div><div><button class="pri" data-a="av">إضافة الأسماء</button></div></div>
   <div class="card">${sv.length?`<input type="search" id="sq" value="${esc(ui.sq)}" placeholder="بحث عن خادم" aria-label="بحث عن خادم">`:""}
   ${sv.map(x=>`<div class="row" data-nm="${esc(x.name)}"${q&&!x.name.toLowerCase().includes(q)?" hidden":""}><input data-a="vn" data-id="${x.id}" value="${esc(x.name)}" aria-label="اسم الخادم">${multi(x)}${delBtn("v",x.id)}</div>`).join("")||'<div class="empty">لا يوجد خدام بعد.</div>'}</div>
   <div class="card"><h2>تقرير الخدام المسجلين</h2><div class="mut">ملف إكسيل بكل الخدام (بدون تكرار) وفصول كل خادم وتنبيهات التكرار، لمراجعة عدم تكرار الأسماء.</div><div><button class="pri" data-a="roster">تحميل تقرير الخدام</button></div></div>`;
@@ -829,7 +846,7 @@ function readUserForm(idx){
 async function doAddServants(withLink){
   const d=ui.dupAsk;ui.dupAsk=null;if(!d)return;
   const c=S.cls[d.cid];if(!c)return;
-  const items=[...d.fresh.map(x=>({...x,fresh:true})),...(withLink?d.link:[])];let n=0,bad=[],i=0;
+  const items=[...d.fresh.map(x=>({...x,fresh:true})),...(d.chosen||[]),...(withLink?d.link:[])];let n=0,bad=[],i=0;
   for(const it of items){
     try{
       if(it.fresh)await FB.set(P("people/"+it.k),{name:it.n,key:it.k,at:Date.now()});     /* إنشاء فقط: القاعدة ترفض اسماً موجوداً */
@@ -1000,9 +1017,19 @@ $app.addEventListener("click",async e=>{
       if(seen.has(k)){skipped.push(n+" (مكرر في القائمة)");return}seen.add(k);
       if(here.has(k)){skipped.push(n+" (مسجل بالفعل في هذا الفصل)");return}
       if(S.people[k]||Object.values(S.srv).some(x=>nameKey(x.name)===k))link.push({n,k,where:placesOf(k)});else fresh.push({n,k})});
-    $app.querySelector("#nv").value="";
-    ui.dupAsk={sid:cl.sid,cid:cl.id,fresh,link,skipped};
-    if(!link.length){await doAddServants(false)}}
+    $app.querySelector("#nv").value="";const sg=$app.querySelector("#sugg");if(sg)sg.innerHTML="";
+    const sim=[],fresh2=[];fresh.forEach(it=>{const c=similarTo(it.n,it.k);if(c.length)sim.push({...it,cands:c});else fresh2.push(it)});
+    ui.dupAsk={sid:cl.sid,cid:cl.id,fresh:fresh2,link,skipped,sim,chosen:[]};
+    if(!sim.length&&!link.length){await doAddServants(false)}}
+  else if(a==="simy"||a==="simn"){const d=ui.dupAsk;if(!d||!d.sim||!d.sim.length)return;const it=d.sim.shift();
+    if(a==="simn")d.fresh.push({n:it.n,k:it.k});
+    else{const pe=persons()[b.dataset.k];if(pe){if(servants(d.cid).some(y=>(y.pid||nameKey(y.name))===pe.k))d.skipped.push(pe.name+" (مسجل بالفعل في هذا الفصل)");else d.chosen.push({n:pe.name,k:pe.k})}}
+    if(!d.sim.length&&!d.link.length)await doAddServants(false)}
+  else if(a==="pickp"){if(!cl)return;const pe=persons()[b.dataset.k];if(!pe)return;
+    if(servants(cl.id).some(y=>(y.pid||nameKey(y.name))===pe.k)){flash("مسجل بالفعل في هذا الفصل");return}
+    try{await FB.set(spath(cl.sid,cl.id,uid()),{name:pe.name,order:Date.now(),cid:cl.id,pid:pe.k});flash("تمت إضافة «"+pe.name+"» لهذا الفصل")}catch(er){failMsg(er);return}
+    const ta=$app.querySelector("#nv");if(ta){const ls=ta.value.split("\n");ls.pop();ta.value=ls.join("\n");ta.focus()}
+    const sg=$app.querySelector("#sugg");if(sg)sg.innerHTML="";return}
   else if(a==="dupy"){await doAddServants(true)}
   else if(a==="dupn"){await doAddServants(false)}
   else if(a==="dupx"){ui.dupAsk=null}
@@ -1069,6 +1096,9 @@ $app.addEventListener("change",e=>{
 $app.addEventListener("input",e=>{
   const t=e.target;
   if(t.id==="imptxt")ui.impText=t.value;
+  else if(t.id==="nv"){const cl=curCls(),sg=$app.querySelector("#sugg");if(!cl||!sg)return;
+    const line=(t.value.split("\n").pop()||"").trim(),res=line.length>=2?searchPeople(line,cl.id):[];
+    sg.innerHTML=res.length?`<div class="mut">أسماء مسجلة مطابقة:</div>`+res.map(r=>`<button type="button" data-a="pickp" data-k="${esc(r.k)}"${r.here?" disabled":""}><b>${esc(r.name)}</b><span class="mut">${r.here?"مسجل بالفعل في هذا الفصل":esc(r.where.join("، ")||"سجل الأسماء")}</span></button>`).join(""):(line.length>=2&&Object.keys(persons()).length?'<div class="mut">لا يوجد اسم مطابق، سيُسجَّل كاسم جديد عند الإضافة.</div>':"")}
   else if(t.id==="chn"||t.id==="chc"||t.id==="jcode"||t.id==="jn"||t.id==="je")ui[t.id]=t.value
   else if(t.id==="why"){if(ui.pick)ui.pick.txt=t.value}
   else if(t.id==="nt"){if(ui.note)ui.note.txt=t.value}
