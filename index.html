@@ -41,6 +41,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);
 .sugg{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .sugg button{text-align:right;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:44px}
 .sugg button[disabled]{opacity:.55}
+.ck{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;min-height:40px}
 .fl{display:block;margin:8px 0;font-size:14px}
 .fl input{display:block;width:100%;margin-top:4px}
 .chb{font-size:14px;padding:4px 10px;min-height:34px;border:1px solid var(--line);border-radius:999px}
@@ -192,10 +193,14 @@ const similarTo=(n,k)=>{const a=toks(n);if(!a.length)return[];
 const servants=cid=>Object.values(S.srv).filter(x=>x.cid===cid).sort((a,b)=>(a.order||0)-(b.order||0));
 const tabsAllowed=()=>{const t=[];if(can("rec"))t.push(["rec","المتابعة"]);if(can("rep"))t.push(["rep","التقارير"]);if(can("srv"))t.push(["srv","الخدمات والخدام"]);if(isAdmin())t.push(["usr","المستخدمون"+(Object.keys(S.reqs).length?" ("+Object.keys(S.reqs).length+")":"")]);t.push(["acc","حسابي"]);return t};
 const cellKey=(vid,i)=>vid+"_"+i;
-const getWeek=(cid,date)=>S.weeks[cid+"|"+date]||{cells:{},why:{},notes:{},exc:{}};
+const getWeek=(cid,date)=>S.weeks[cid+"|"+date]||{cells:{},why:{},notes:{},exc:{},exi:{}};
 const isExcuse=(i,s)=>ITEMS[i].sym[s]==="عذر";
 const isExcused=(cid,date,vid)=>{const w=S.weeks[cid+"|"+date];return !!(w&&w.exc&&w.exc[vid]!=null)};
-const getState=(cid,date,vid,i)=>{const w=S.weeks[cid+"|"+date];if(!w)return 0;if(ITEMS[i].exc&&w.exc&&w.exc[vid]!=null)return 3;return(w.cells&&w.cells[cellKey(vid,i)])||0};
+/* العذر الواحد للخادم: السبب في exc والبنود التي يشملها في exi (قائمة أرقام). بدون exi = كل البنود الثلاثة (بيانات قديمة) */
+const EXC_IDX=ITEMS.map((x,i)=>x.exc?i:-1).filter(i=>i>=0);
+const excOf=(w,vid)=>{if(!w||!w.exc||w.exc[vid]==null)return null;const a=w.exi&&w.exi[vid];return Array.isArray(a)&&a.length?a.filter(i=>EXC_IDX.includes(i)):EXC_IDX};
+const covers=(cid,date,vid,i)=>{const e=excOf(S.weeks[cid+"|"+date],vid);return !!(e&&ITEMS[i].exc&&e.includes(i))};
+const getState=(cid,date,vid,i)=>{const w=S.weeks[cid+"|"+date];if(!w)return 0;if(covers(cid,date,vid,i))return 3;return(w.cells&&w.cells[cellKey(vid,i)])||0};
 const P=p=>"churches/"+ui.ch+"/"+p;            /* كل بيانات الكنيسة تحت churches/{id}/ */
 const cpath=(sid,cid)=>P("services/"+sid+"/classes/"+cid);
 const canSwitch=()=>isOwner()||!!(S.mship&&S.mship.length>1);
@@ -211,10 +216,10 @@ function stats(cid,test){
   for(const k in S.weeks){
     const w=S.weeks[k];if(w.cid!==cid||!test(w.date))continue;
     for(const vid in by){
-      const o=by[vid],exv=!!(w.exc&&w.exc[vid]!=null);
-      if(exv)o.ex++;                       /* عذر واحد في الأسبوع مهما كان عدد البنود */
+      const o=by[vid],exv=excOf(w,vid);
+      if(exv&&exv.length)o.ex++;                       /* عذر واحد في الأسبوع مهما كان عدد البنود */
       for(let i=0;i<NI;i++){
-        const st=(exv&&ITEMS[i].exc)?3:+((w.cells||{})[cellKey(vid,i)]||0);
+        const st=(exv&&ITEMS[i].exc&&exv.includes(i))?3:+((w.cells||{})[cellKey(vid,i)]||0);
         if(!st)continue;
         o.cnt[i][st]++;
         const wt=ITEMS[i].w[st];
@@ -295,7 +300,7 @@ function reconcile(){
     if(can("rec")||can("rep"))add("wk:"+cid,()=>FB.watchCol(cpath(sid,cid)+"/weeks",(list,m)=>{
       setPend("wk:"+cid,m);
       for(const k in S.weeks)if(S.weeks[k].cid===cid)delete S.weeks[k];
-      list.forEach(d=>S.weeks[cid+"|"+d.id]={sid,cid,date:d.id,cells:d.cells||{},why:d.why||{},notes:d.notes||{},exc:d.exc||{}});paint();
+      list.forEach(d=>S.weeks[cid+"|"+d.id]={sid,cid,date:d.id,cells:d.cells||{},why:d.why||{},notes:d.notes||{},exc:d.exc||{},exi:d.exi||{}});paint();
     },dbErr));
   }
   for(const k of Object.keys(subs)){
@@ -434,11 +439,11 @@ function recView(v,cl){
   <div class="sc"><table><thead><tr><th class="nm">الخادم</th><th>عذر</th>${ITEMS.map((x,i)=>`<th data-a="col" data-i="${i}">${x.n}</th>`).join("")}<th>النسبة</th><th>ملاحظات</th></tr></thead><tbody>`;
   const wk=getWeek(cl.id,ui.date);
   sv.forEach((s,k)=>{
-    h+=`<tr><td class="nm" data-a="row" data-s="${s.id}">${esc(s.name)}</td>`+(()=>{const ex=isExcused(cl.id,ui.date,s.id);return `<td class="c"><button class="${ex?"ex":""}${ex&&!canEditRec()?" lk":""}" data-a="exc" data-s="${s.id}" aria-label="عذر ${esc(s.name)}">${ex?"عذر":"+"}</button></td>`})()+ITEMS.map((_,i)=>`<td class="c">${stateBtn(i,getState(cl.id,ui.date,s.id,i),`data-a="c" data-s="${s.id}" data-i="${i}"`,s.name+" "+ITEMS[i].n,!canEditRec()||(ITEMS[i].exc&&isExcused(cl.id,ui.date,s.id)))}</td>`).join("")+`<td>${pc(st[k].p)}</td><td class="c"><button class="nt${(wk.notes||{})[s.id]?" has":""}" data-a="nt" data-s="${s.id}" aria-label="ملاحظات ${esc(s.name)}">${(wk.notes||{})[s.id]?"📝":"+"}</button></td></tr>`;
+    h+=`<tr><td class="nm" data-a="row" data-s="${s.id}">${esc(s.name)}</td>`+(()=>{const ex=isExcused(cl.id,ui.date,s.id);return `<td class="c"><button class="${ex?"ex":""}${ex&&!canEditRec()?" lk":""}" data-a="exc" data-s="${s.id}" aria-label="عذر ${esc(s.name)}">${ex?"عذر"+(()=>{const n=(excOf(getWeek(cl.id,ui.date),s.id)||[]).length;return n<EXC_IDX.length?" "+n+"/"+EXC_IDX.length:""})():"+"}</button></td>`})()+ITEMS.map((_,i)=>`<td class="c">${stateBtn(i,getState(cl.id,ui.date,s.id,i),`data-a="c" data-s="${s.id}" data-i="${i}"`,s.name+" "+ITEMS[i].n,!canEditRec()||covers(cl.id,ui.date,s.id,i))}</td>`).join("")+`<td>${pc(st[k].p)}</td><td class="c"><button class="nt${(wk.notes||{})[s.id]?" has":""}" data-a="nt" data-s="${s.id}" aria-label="ملاحظات ${esc(s.name)}">${(wk.notes||{})[s.id]?"📝":"+"}</button></td></tr>`;
   });
   h+=`</tbody><tfoot><tr><td class="nm">الملتزمون</td><td></td>${ITEMS.map((_,i)=>i===1?`<td>ت ${st.reduce((s,o)=>s+o.cnt[1][1],0)} · ز ${st.reduce((s,o)=>s+o.cnt[1][2],0)}</td>`:`<td>${st.reduce((s,o)=>s+o.cnt[i][1],0)}</td>`).join("")}<td>${pc(avg(st.map(o=>o.p)))}</td><td></td></tr></tfoot></table></div></div>`;
   const exc=[];
-  sv.forEach(s=>{if(isExcused(cl.id,ui.date,s.id))exc.push(`<div class="exrow"><b>${esc(s.name)}</b> — عذر (${EXC_NAMES.join("، ")}): ${esc((wk.exc||{})[s.id]||"بدون سبب مكتوب")}</div>`)});
+  sv.forEach(s=>{if(isExcused(cl.id,ui.date,s.id))exc.push(`<div class="exrow"><b>${esc(s.name)}</b> — عذر (${excOf(wk,s.id).map(i=>ITEMS[i].n).join("، ")}): ${esc((wk.exc||{})[s.id]||"بدون سبب مكتوب")}</div>`)});
   sv.forEach(s=>ITEMS.forEach((_,i)=>{if(!ITEMS[i].exc&&getState(cl.id,ui.date,s.id,i)===3&&isExcuse(i,3))exc.push(`<div class="exrow"><b>${esc(s.name)}</b> — ${ITEMS[i].n}: ${esc((wk.why||{})[cellKey(s.id,i)]||"بدون سبب مكتوب")}</div>`)}));
   const nts=sv.filter(s=>(wk.notes||{})[s.id]).map(s=>`<div class="exrow"><b>${esc(s.name)}</b>: ${esc(wk.notes[s.id])}</div>`);
   if(exc.length||nts.length)h+=`<div class="card">${exc.length?`<h2>الأعذار</h2>${exc.join("")}`:""}${nts.length?`<h2>الملاحظات</h2>${nts.join("")}`:""}</div>`;
@@ -601,7 +606,8 @@ function sheetView(){
   }
   if(ui.pick&&ui.pick.kind==="exc"){
     const sv=S.srv[ui.pick.s];if(!sv)return "";
-    return `<div class="spacer"></div><div class="sheet" role="dialog" aria-label="عذر"><div><b>${esc(sv.name)}</b> — <b>عذر</b><div class="mut">عذر واحد لهذا الأسبوع يشمل: ${EXC_NAMES.join("، ")}. اكتب السبب${canEditRec()?"":". بعد الحفظ لا يمكن تعديله"}.</div></div>
+    return `<div class="spacer"></div><div class="sheet" role="dialog" aria-label="عذر"><div><b>${esc(sv.name)}</b> — <b>عذر</b><div class="mut">اختر البنود التي يشملها العذر (بند أو اثنان أو الثلاثة)، ثم اكتب السبب${canEditRec()?"":". بعد الحفظ لا يمكن تعديله"}.</div>
+    <div class="opts">${EXC_IDX.map(i=>`<label class="ck"><input type="checkbox" data-a="exi" data-i="${i}"${(ui.pick.items||[]).includes(i)?" checked":""}> ${ITEMS[i].n}</label>`).join("")}</div></div>
     <textarea id="why" placeholder="سبب العذر" aria-label="سبب العذر">${esc(ui.pick.txt||"")}</textarea><div class="opts"><button class="pri" data-a="pkw">حفظ</button>${ui.pick.has?'<button class="dng" data-a="exd">حذف العذر</button>':""}<button data-a="pkx">إلغاء</button></div></div>`;
   }
   if(ui.pick&&ui.pick.step==="why"){
@@ -675,7 +681,7 @@ function detailAoa(pairs,t,withSvc,withCls){
         const key=w.date+"|"+vid;(recs[key]=recs[key]||{d:w.date,vid,c:Array(NI).fill(0),why:[],note:""}).c[i]=+w.cells[ck];
         if(+w.cells[ck]===3&&(w.why||{})[ck])recs[key].why.push(ITEMS[i].n+": "+w.why[ck])}
       for(const vid in (w.notes||{})){if(!nm[vid]||!w.notes[vid])continue;const key=w.date+"|"+vid;(recs[key]=recs[key]||{d:w.date,vid,c:Array(NI).fill(0),why:[],note:""}).note=w.notes[vid]}
-      for(const vid in (w.exc||{})){if(!nm[vid]||w.exc[vid]==null)continue;const key=w.date+"|"+vid;const r=(recs[key]=recs[key]||{d:w.date,vid,c:Array(NI).fill(0),why:[],note:""});ITEMS.forEach((x,i)=>{if(x.exc)r.c[i]=3});r.why.unshift("عذر ("+EXC_NAMES.join("، ")+"): "+w.exc[vid])}}
+      for(const vid in (w.exc||{})){if(!nm[vid]||w.exc[vid]==null)continue;const key=w.date+"|"+vid;const r=(recs[key]=recs[key]||{d:w.date,vid,c:Array(NI).fill(0),why:[],note:""});const ev=excOf(w,vid);ev.forEach(i=>{r.c[i]=3});r.why.unshift("عذر ("+ev.map(i=>ITEMS[i].n).join("، ")+"): "+w.exc[vid])}}
     Object.values(recs).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:nm[a.vid].i-nm[b.vid].i)
       .forEach(r=>out.push([...(withSvc?[pr.v.name]:[]),...(withCls?[pr.c.name]:[]),r.d,nm[r.vid].n,...r.c.map((s,i)=>ITEMS[i].sym[s]),r.why.join("؛ "),r.note]));
   }
@@ -972,7 +978,7 @@ $app.addEventListener("click",async e=>{
   if(a==="tab"){ui.tab=b.dataset.t;ui.del=null}
   else if(a==="d"){ui.date=+b.dataset.n?addDays(ui.date,+b.dataset.n):fridayOnOrBefore(today)}
   else if(a==="c"){if(!cl)return;const s=b.dataset.s,i=+b.dataset.i,cv=getState(cl.id,ui.date,s,i);
-    if(ITEMS[i].exc&&isExcused(cl.id,ui.date,s)){flash("لهذا الخادم عذر مسجَّل لهذا الأسبوع: "+((getWeek(cl.id,ui.date).exc||{})[s]||"")+(canEditRec()?". لتغييره اضغط عمود «عذر»":""));return}
+    if(covers(cl.id,ui.date,s,i)){flash("لهذا الخادم عذر مسجَّل لهذا الأسبوع: "+((getWeek(cl.id,ui.date).exc||{})[s]||"")+(canEditRec()?". لتغييره اضغط عمود «عذر»":""));return}
     if(canEditRec()){
       const pk=ITEMS[i].pick,ix=pk.indexOf(cv),nx=ix<0?pk[0]:(ix+1<pk.length?pk[ix+1]:0);
       if(nx===3&&isExcuse(i,3)){ui.pick={s,i,step:"why",txt:(getWeek(cl.id,ui.date).why||{})[cellKey(s,i)]||""};ui.bulk=null;ui.note=null}
@@ -982,26 +988,31 @@ $app.addEventListener("click",async e=>{
       ui.pick={s,i,step:"pick",txt:""};ui.bulk=null;ui.note=null}}
   else if(a==="pk"){if(cl&&ui.pick){const st=+b.dataset.v;if(isExcuse(ui.pick.i,st)){ui.pick.step="why"}else{writeCell(cl,ui.date,ui.pick.s,ui.pick.i,st);ui.pick=null}}}
   else if(a==="pkw"){if(!cl||!ui.pick)return;const txt=(($app.querySelector("#why")||{}).value||"").trim();if(!txt){flash("اكتب سبب العذر أولاً");return}
-    if(ui.pick.kind==="exc")FB.set(wpath(cl.sid,cl.id,ui.date),{exc:{[ui.pick.s]:txt}},true).catch(failMsg);
+    if(ui.pick.kind==="exc"){
+      const its=[...(ui.pick.items||[])].sort((x,y)=>x-y);
+      if(!its.length){flash("اختر بنداً واحداً على الأقل يشمله العذر");return}
+      const w0=getWeek(cl.id,ui.date);
+      if(!canEditRec()&&its.some(i=>(w0.cells||{})[cellKey(ui.pick.s,i)])){flash("سُجِّل لهذا الخادم أحد البنود المختارة، فلا يمكن تسجيل عذر عليه");return}
+      FB.set(wpath(cl.sid,cl.id,ui.date),{exc:{[ui.pick.s]:txt},exi:{[ui.pick.s]:its}},true).catch(failMsg)}
     else writeCell(cl,ui.date,ui.pick.s,ui.pick.i,3,txt);
     ui.pick=null}
   else if(a==="exc"){if(!cl)return;const s=b.dataset.s,w=getWeek(cl.id,ui.date),r=(w.exc||{})[s];
-    if(r!=null){if(!canEditRec()){flash("عذر مسجَّل: "+r+". لا يمكن تعديله");return}ui.pick={s,kind:"exc",step:"why",txt:r,has:true}}
-    else{if(!canEditRec()&&ITEMS.some((x,i)=>x.exc&&(w.cells||{})[cellKey(s,i)])){flash("سُجِّل لهذا الخادم أحد بنود الحضور، فلا يمكن تسجيل عذر عليه");return}ui.pick={s,kind:"exc",step:"why",txt:""}}
+    if(r!=null){if(!canEditRec()){flash("عذر مسجَّل: "+r+". لا يمكن تعديله");return}ui.pick={s,kind:"exc",step:"why",txt:r,has:true,items:[...(excOf(w,s)||EXC_IDX)]}}
+    else{if(!canEditRec()&&EXC_IDX.every(i=>(w.cells||{})[cellKey(s,i)])){flash("سُجِّلت كل بنود الحضور لهذا الخادم، فلا يمكن تسجيل عذر عليه");return}ui.pick={s,kind:"exc",step:"why",txt:"",items:[...EXC_IDX]}}
     ui.bulk=null;ui.note=null}
-  else if(a==="exd"){if(cl&&ui.pick&&ui.pick.kind==="exc")FB.set(wpath(cl.sid,cl.id,ui.date),{exc:{[ui.pick.s]:null}},true).catch(failMsg);ui.pick=null}
+  else if(a==="exd"){if(cl&&ui.pick&&ui.pick.kind==="exc")FB.set(wpath(cl.sid,cl.id,ui.date),{exc:{[ui.pick.s]:null},exi:{[ui.pick.s]:null}},true).catch(failMsg);ui.pick=null}
   else if(a==="pkx"){ui.pick=null;ui.bulk=null}
   else if(a==="nt"){if(!cl)return;const s=b.dataset.s,ex=(getWeek(cl.id,ui.date).notes||{})[s]||"";ui.note={s,txt:ex,ro:!!ex&&!canEditRec()};ui.pick=null;ui.bulk=null}
   else if(a==="nts"){if(!cl||!ui.note)return;const txt=(($app.querySelector("#nt")||{}).value||"").trim();if(!txt&&!canEditRec()){flash("اكتب الملاحظة أولاً");return}FB.set(wpath(cl.sid,cl.id,ui.date),{notes:{[ui.note.s]:txt||null}},true).catch(failMsg);ui.note=null}
   else if(a==="ntx"){ui.note=null}
   else if(a==="bk"){if(cl&&ui.bulk){const o={};ui.bulk.keys.forEach(k=>o[k]=1);writeCells(cl,ui.date,o)}ui.bulk=null}
   else if(a==="col"){if(!cl)return;const i=+b.dataset.i,sv=servants(cl.id);
-    if(canEditRec()){const sv2=sv.filter(s=>!(ITEMS[i].exc&&isExcused(cl.id,ui.date,s.id))),all=sv2.length>0&&sv2.every(s=>getState(cl.id,ui.date,s.id,i)===1),o={};sv2.forEach(s=>o[cellKey(s.id,i)]=all?0:1);writeCells(cl,ui.date,o);return}
+    if(canEditRec()){const sv2=sv.filter(s=>!covers(cl.id,ui.date,s.id,i)),all=sv2.length>0&&sv2.every(s=>getState(cl.id,ui.date,s.id,i)===1),o={};sv2.forEach(s=>o[cellKey(s.id,i)]=all?0:1);writeCells(cl,ui.date,o);return}
     const keys=sv.filter(s=>getState(cl.id,ui.date,s.id,i)===0).map(s=>cellKey(s.id,i));
     if(!keys.length){flash("كل خانات هذا البند مسجَّلة");return}
     ui.bulk={keys,label:ITEMS[i].sym[1]+" في بند «"+ITEMS[i].n+"»"};ui.pick=null}
   else if(a==="row"){if(!cl)return;const s=b.dataset.s;
-    if(canEditRec()){const its=ITEMS.map((_,i)=>i).filter(i=>!(ITEMS[i].exc&&isExcused(cl.id,ui.date,s))),all=its.every(i=>getState(cl.id,ui.date,s,i)===1),o={};its.forEach(i=>o[cellKey(s,i)]=all?0:1);writeCells(cl,ui.date,o);return}
+    if(canEditRec()){const its=ITEMS.map((_,i)=>i).filter(i=>!covers(cl.id,ui.date,s,i)),all=its.every(i=>getState(cl.id,ui.date,s,i)===1),o={};its.forEach(i=>o[cellKey(s,i)]=all?0:1);writeCells(cl,ui.date,o);return}
     const keys=ITEMS.map((_,i)=>i).filter(i=>getState(cl.id,ui.date,s,i)===0).map(i=>cellKey(s,i));
     if(!keys.length){flash("كل خانات هذا الخادم مسجَّلة");return}
     ui.bulk={keys,label:"✔ (وتليفون للإفتقاد) لـ "+((S.srv[s]||{}).name||"")};ui.pick=null}
@@ -1081,6 +1092,7 @@ $app.addEventListener("change",e=>{
   const t=e.target,a=t.dataset.a;
   if(t.id==="impfile"){readImpFile(t.files&&t.files[0]);return}
   if(t.id==="imptxt"){ui.impText=t.value;return}
+  if(a==="exi"){if(ui.pick&&ui.pick.kind==="exc"){const i=+t.dataset.i,it=ui.pick.items||[];ui.pick.items=t.checked?[...new Set([...it,i])]:it.filter(x=>x!==i)}return}
   if(t.dataset.uf)return;
   if(t.id==="sv"){ui.sid=t.value;store("servants_fb_sid",t.value);ui.cid=null}
   else if(t.id==="cl"){ui.cid=t.value;store("servants_fb_cid",t.value)}
